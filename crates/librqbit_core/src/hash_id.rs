@@ -1,3 +1,5 @@
+use bytes::Bytes;
+use clone_to_owned::CloneToOwned;
 use data_encoding::BASE32;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
@@ -163,6 +165,14 @@ impl<'de, const N: usize> Deserialize<'de> for Id<N> {
         }
 
         deserializer.deserialize_any(IdVisitor {})
+    }
+}
+
+impl<const N: usize> CloneToOwned for Id<N> {
+    type Target = Id<N>;
+
+    fn clone_to_owned(&self, within_buffer: Option<&Bytes>) -> Self::Target {
+        Id::from_bytes(&self.0).unwrap()
     }
 }
 

@@ -232,6 +232,7 @@ pub async fn create_torrent<'a>(
             publisher: None,
             publisher_url: None,
             creation_date: None,
+            alt_info_hashes: vec![],
             info_hash,
         },
         output_folder: res.output_folder,

@@ -32,9 +32,14 @@ pub fn torrent_from_bytes<'de>(
 
     use sha1w::ISha1;
 
-    let mut digest = sha1w::Sha1::new();
-    digest.update(t.info.raw_bytes.as_ref());
-    t.info_hash = Id20::new(digest.finish());
+    if t.alt_info_hashes.is_empty() {
+        let mut digest = sha1w::Sha1::new();
+        digest.update(t.info.raw_bytes.as_ref());
+        t.info_hash = Id20::new(digest.finish());
+    } else {
+        t.info_hash = t.alt_info_hashes[0];
+    }
+
     Ok(t)
 }
 
@@ -53,6 +58,12 @@ pub struct TorrentMetaV1<BufType> {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub announce_list: Vec<Vec<BufType>>,
+    #[serde(
+        rename = "altinfohashes",
+        default = "Vec::new",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub alt_info_hashes: Vec<Id20>,
     pub info: WithRawBytes<TorrentMetaV1Info<BufType>, BufType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<BufType>,
@@ -499,6 +510,7 @@ where
             publisher: self.publisher.clone_to_owned(within_buffer),
             publisher_url: self.publisher_url.clone_to_owned(within_buffer),
             creation_date: self.creation_date,
+            alt_info_hashes: self.alt_info_hashes.clone_to_owned(within_buffer),
             info_hash: self.info_hash,
         }
     }
