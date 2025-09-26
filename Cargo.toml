@@ -35,11 +35,16 @@ default-members = [
 
 [profile.dev]
 panic = "abort"
+incremental = true # Compile your binary in smaller steps.
 
 [profile.release]
 panic = "abort"
 debug = false
 lto = "thin"
+# See https://tauri.app/concept/size/#cargo-configuration
+strip = true # Ensures debug symbols are removed.
+opt-level = "s" # Prioritizes small binary size. Use `3` if you prefer speed.
+codegen-units = 1 # Allows LLVM to perform better optimization.
 
 [profile.release-github]
 inherits = "release"
