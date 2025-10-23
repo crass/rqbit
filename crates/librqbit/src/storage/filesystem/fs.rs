@@ -1,15 +1,18 @@
 use std::{
+    fs::File,
     fs::OpenOptions,
     io::IoSlice,
     path::{Path, PathBuf},
 };
 
+use anyhow::anyhow;
 use anyhow::Context;
 use tracing::warn;
 
 use crate::{
     storage::{StorageFactoryExt, filesystem::opened_file::OurFileExt},
     torrent_state::{ManagedTorrentShared, TorrentMetadata},
+    error::Error,
 };
 
 use crate::storage::{StorageFactory, TorrentStorage};
@@ -30,6 +33,8 @@ impl StorageFactory for FilesystemStorageFactory {
         Ok(FilesystemStorage {
             output_folder: shared.options.output_folder.clone(),
             opened_files: Default::default(),
+            allow_overwrite: shared.options.allow_overwrite,
+            defer_open: shared.options.defer_open,
         })
     }
 
@@ -41,6 +46,8 @@ impl StorageFactory for FilesystemStorageFactory {
 pub struct FilesystemStorage {
     pub(super) output_folder: PathBuf,
     pub(super) opened_files: Vec<OpenedFile>,
+    pub(super) allow_overwrite: bool,
+    pub(super) defer_open: bool,
 }
 
 impl FilesystemStorage {
@@ -52,7 +59,38 @@ impl FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            allow_overwrite: self.allow_overwrite,
+            defer_open: self.defer_open,
         })
+    }
+
+    fn open_file(&self, full_path: &PathBuf) -> anyhow::Result<File> {
+        std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
+        let f = if self.allow_overwrite || self.defer_open {
+            OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .read(true)
+                .write(true)
+                .open(&full_path)
+                .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+        } else {
+            // create_new does not seem to work with read(true), so calling this twice.
+            OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&full_path)
+                .with_context(|| {
+                    format!(
+                        "error creating a new file (because allow_overwrite = false) {:?}",
+                        &full_path
+                    )
+                })?;
+            OpenOptions::new().read(true).write(true).open(&full_path)?
+        };
+
+
+        return Ok(f);
     }
 }
 
@@ -68,9 +106,16 @@ impl TorrentStorage for FilesystemStorage {
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all(offset, buf);
+        let res = of.try_mark_sparse();
         #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all(offset, buf);
+        let res = of.lock_read();
+        let f = match res {
+            Ok(ref f) => f,
+            Err(Error::FsFileIsNone) => &self.open_file(&of.get_path())?,
+            _ => unimplemented!("This should never happen"),
+        };
+
+        return f.pwrite_all(offset, buf);
     }
 
     fn pwrite_all_vectored(
@@ -81,9 +126,17 @@ impl TorrentStorage for FilesystemStorage {
     ) -> anyhow::Result<usize> {
         let of = self.opened_files.get(file_id).context("no such file")?;
         #[cfg(windows)]
-        return of.try_mark_sparse()?.pwrite_all_vectored(offset, bufs);
+        let res = of.try_mark_sparse();
         #[cfg(not(windows))]
-        return of.lock_read()?.pwrite_all_vectored(offset, bufs);
+        let res = of.lock_read();
+
+        let f = match res {
+            Ok(ref f) => f,
+            Err(Error::FsFileIsNone) => &self.open_file(&of.get_path())?,
+            _ => unimplemented!("This should never happen"),
+        };
+
+        return f.pwrite_all_vectored(offset, bufs);
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
@@ -105,6 +158,8 @@ impl TorrentStorage for FilesystemStorage {
                 .map(|f| f.take_clone())
                 .collect::<anyhow::Result<Vec<_>>>()?,
             output_folder: self.output_folder.clone(),
+            allow_overwrite: self.allow_overwrite,
+            defer_open: self.defer_open,
         }))
     }
 
@@ -126,6 +181,8 @@ impl TorrentStorage for FilesystemStorage {
         shared: &ManagedTorrentShared,
         metadata: &TorrentMetadata,
     ) -> anyhow::Result<()> {
+        self.allow_overwrite = shared.options.allow_overwrite;
+        self.defer_open = shared.options.defer_open;
         let mut files = Vec::<OpenedFile>::new();
         for file_details in metadata.file_infos.iter() {
             let mut full_path = self.output_folder.clone();
@@ -136,30 +193,24 @@ impl TorrentStorage for FilesystemStorage {
                 files.push(OpenedFile::new_dummy());
                 continue;
             };
-            std::fs::create_dir_all(full_path.parent().context("bug: no parent")?)?;
-            let f = if shared.options.allow_overwrite {
-                OpenOptions::new()
-                    .create(true)
-                    .truncate(false)
-                    .read(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| format!("error opening {full_path:?} in read/write mode"))?
+
+            let of;
+            if let Ok(b) = std::fs::exists(&full_path) {
+                if b && !shared.options.allow_overwrite {
+                    // File exists, but overwrite not allowed
+                    return Err(anyhow!(Error::FsFileExists));
+                } else if !b && shared.options.defer_open {
+                    // If path does not exist and deferred option is set,
+                    // then create an OpenedFile with no fd
+                    of = OpenedFile::new_defer(full_path.clone());
+                } else {
+                    of = OpenedFile::new(full_path.clone(), self.open_file(&full_path)?);
+                }
             } else {
-                // create_new does not seem to work with read(true), so calling this twice.
-                OpenOptions::new()
-                    .create_new(true)
-                    .write(true)
-                    .open(&full_path)
-                    .with_context(|| {
-                        format!(
-                            "error creating a new file (because allow_overwrite = false) {:?}",
-                            &full_path
-                        )
-                    })?;
-                OpenOptions::new().read(true).write(true).open(&full_path)?
-            };
-            files.push(OpenedFile::new(full_path.clone(), f));
+                of = OpenedFile::new(full_path.clone(), self.open_file(&full_path)?);
+            }
+
+            files.push(of);
         }
 
         self.opened_files = files;

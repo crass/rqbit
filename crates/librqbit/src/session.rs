@@ -253,6 +253,8 @@ pub struct AddTorrentOptions {
     /// You probably want to set it, however for safety it's not default.
     #[serde(default)]
     pub overwrite: bool,
+    // Defer file open and creation until the first write.
+    pub defer_open: bool,
     /// Only list the files in the torrent without starting it.
     #[serde(default)]
     pub list_only: bool,
@@ -1275,6 +1277,7 @@ impl Session {
                     peer_connect_timeout: peer_opts.connect_timeout,
                     peer_read_write_timeout: peer_opts.read_write_timeout,
                     allow_overwrite: opts.overwrite,
+                    defer_open: opts.defer_open,
                     output_folder,
                     disk_write_queue: self.disk_write_tx.clone(),
                     ratelimits: opts.ratelimits,

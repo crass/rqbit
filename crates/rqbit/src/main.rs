@@ -349,6 +349,10 @@ struct DownloadOpts {
     #[arg(long)]
     overwrite: bool,
 
+    /// Set if you want file creation to happen on demand
+    #[arg(long)]
+    defer_open: bool,
+
     /// Exit the program once the torrents complete download.
     #[arg(short = 'e', long)]
     exit_on_finish: bool,
@@ -715,6 +719,7 @@ async fn async_main(mut opts: Opts, cancel: CancellationToken) -> anyhow::Result
             let torrent_opts = || AddTorrentOptions {
                 only_files_regex: download_opts.only_files_matching_regex.clone(),
                 overwrite: download_opts.overwrite,
+                defer_open: download_opts.defer_open,
                 list_only: download_opts.list,
                 force_tracker_interval: opts.force_tracker_interval,
                 sub_folder: download_opts.sub_folder.clone(),

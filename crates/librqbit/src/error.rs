@@ -123,6 +123,9 @@ pub enum Error {
     #[error("file is None, torrent was probably paused")]
     FsFileIsNone,
 
+    #[error("file exists but overwite not allowed")]
+    FsFileExists,
+
     #[error("session is dead")]
     SessionDestroyed,
 }

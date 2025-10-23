@@ -139,6 +139,17 @@ impl OpenedFile {
         }
     }
 
+    pub fn new_defer(path: PathBuf) -> Self {
+        Self {
+            file: RwLock::new(OpenedFileLocked {
+                path,
+                fd: None,
+                #[cfg(windows)]
+                tried_marking_sparse: false,
+            }),
+        }
+    }
+
     pub fn new_dummy() -> Self {
         Self {
             file: RwLock::new(Default::default()),
@@ -182,6 +193,10 @@ impl OpenedFile {
         }
         let g = parking_lot::RwLockWriteGuard::downgrade(g);
         Ok(RwLockReadGuard::try_map(g, |f| f.fd.as_ref()).ok().unwrap())
+    }
+
+    pub fn get_path(&self) -> PathBuf {
+        self.file.read().path.clone()
     }
 }
 

@@ -232,7 +232,7 @@ impl TorrentStateInitializing {
                     .unwrap_or(true)
                 {
                     let now = Instant::now();
-                    if fi.attrs.padding {
+                    if fi.attrs.padding || self.shared.options.defer_open {
                         continue;
                     }
                     if let Err(err) = self.files.ensure_file_length(idx, fi.len) {
