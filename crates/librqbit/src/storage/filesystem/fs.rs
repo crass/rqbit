@@ -89,6 +89,22 @@ impl FilesystemStorage {
             OpenOptions::new().read(true).write(true).open(&full_path)?
         };
 
+        return Ok(f);
+    }
+
+    fn get_file(&self, file_id: usize) -> anyhow::Result<File> {
+        let of = self.opened_files.get(file_id).context("no such file")?;
+        #[cfg(windows)]
+        let res = of.try_mark_sparse();
+        #[cfg(not(windows))]
+        let res = of.lock_read();
+
+        let f = match res {
+            // We need to clone the File?!?, that's lame, we just created it
+            Ok(f) => f.try_clone()?,
+            Err(Error::FsFileIsNone) => self.open_file(&of.get_path())?,
+            _ => unimplemented!(),
+        };
 
         return Ok(f);
     }
@@ -104,18 +120,7 @@ impl TorrentStorage for FilesystemStorage {
     }
 
     fn pwrite_all(&self, file_id: usize, offset: u64, buf: &[u8]) -> anyhow::Result<()> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        let res = of.try_mark_sparse();
-        #[cfg(not(windows))]
-        let res = of.lock_read();
-        let f = match res {
-            Ok(ref f) => f,
-            Err(Error::FsFileIsNone) => &self.open_file(&of.get_path())?,
-            _ => unimplemented!("This should never happen"),
-        };
-
-        return f.pwrite_all(offset, buf);
+        return self.get_file(file_id)?.pwrite_all(offset, buf);
     }
 
     fn pwrite_all_vectored(
@@ -124,19 +129,7 @@ impl TorrentStorage for FilesystemStorage {
         offset: u64,
         bufs: [IoSlice<'_>; 2],
     ) -> anyhow::Result<usize> {
-        let of = self.opened_files.get(file_id).context("no such file")?;
-        #[cfg(windows)]
-        let res = of.try_mark_sparse();
-        #[cfg(not(windows))]
-        let res = of.lock_read();
-
-        let f = match res {
-            Ok(ref f) => f,
-            Err(Error::FsFileIsNone) => &self.open_file(&of.get_path())?,
-            _ => unimplemented!("This should never happen"),
-        };
-
-        return f.pwrite_all_vectored(offset, bufs);
+        return self.get_file(file_id)?.pwrite_all_vectored(offset, bufs);
     }
 
     fn remove_file(&self, _file_id: usize, filename: &Path) -> anyhow::Result<()> {
